@@ -14,8 +14,9 @@ from pathlib import Path
 
 from src import config
 
-# Money columns are REAL for now. Phase 3 decides whether float is acceptable for
-# money (it usually isn't) before any arithmetic depends on these values.
+# Money columns are REAL because SQLite has no decimal type. That is safe here only because
+# all arithmetic happens in Python with Decimal (normalise.py) and values are rounded to
+# cents BEFORE they are stored. Never do money maths in SQL (SUM over REAL); sum in Python.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
     item_code         TEXT PRIMARY KEY,   -- e.g. FRM-9045-H12: the 20 codes the AI may choose from

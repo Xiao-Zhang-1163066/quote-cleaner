@@ -5,6 +5,7 @@ logic is *mechanism* (only a developer should). Keeping them apart means a demo-
 "what if the outlier limit were 20%?" is a one-line edit, not a code search.
 """
 import os
+from decimal import Decimal
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -40,9 +41,31 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 MODEL_NAME = os.getenv("QUOTE_MODEL", "claude-sonnet-5")
 
 # --- Business rules -------------------------------------------------------------
-# NZ GST. Kept as a plain number for now; Phase 3 decides how money should be
-# represented (float vs Decimal) before any arithmetic depends on it.
-GST_RATE = 0.15
+# All money arithmetic uses Decimal, never float (0.1 + 0.2 != 0.3 in float, and errors
+# of a cent break comparisons against the answer key). Build Decimals from STRINGS:
+# Decimal(0.15) would carry the float's binary error along with it.
+GST_RATE = Decimal("0.15")   # NZ GST
+
+# Conversion factors are data, not logic: changing the board size is a one-line edit here.
+SHEET_AREA_M2 = Decimal("2.88")   # 2400 x 1200 mm plasterboard
+
+# Raw unit spelling -> what it means. A string is one canonical unit. None means "a count
+# of whatever this item is sold in" ("EA" on a GIB sheet, on a pail, or on a 6 m length).
+# A tuple means "one of these" (Chinese 包 is used for both bags and packs).
+# Keys are lowercase; the code lowercases the input before looking it up.
+UNIT_ALIASES = {
+    "lm": "lm", "m": "lm", "米": "lm",
+    "m2": "m2",
+    "sheet": "sheet", "sht": "sheet", "张": "sheet",
+    "pack": "pack", "pk": "pack",
+    "bag": "bag",
+    "包": ("bag", "pack"),
+    "roll": "roll", "rl": "roll", "卷": "roll",
+    "box": "box", "bx": "box", "箱": "box",
+    "tube": "tube", "支": "tube",
+    "pail": "pail", "桶": "pail",
+    "each": None, "ea": None, "根": None,
+}
 
 # --- Issue-detection thresholds (used from Phase 5) -----------------------------
 CALC_TOLERANCE = 0.05          # $: qty x unit price vs line total may differ by this much
