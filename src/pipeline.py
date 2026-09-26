@@ -6,7 +6,9 @@ read -> extract -> normalise -> store + detect issues -> export.
 """
 import argparse
 
-from src import config, db
+from pathlib import Path
+
+from src import config, db, readers
 
 
 def check_setup() -> bool:
@@ -36,7 +38,14 @@ def main() -> int:
                         help="verify input files and settings, then exit")
     parser.add_argument("--init-db", action="store_true",
                         help="create the database tables and load the RFQ items")
+    parser.add_argument("--read", metavar="FILE",
+                        help="print the lines the reader extracts from one quote file")
     args = parser.parse_args()
+
+    if args.read:
+        for line in readers.read_quote(Path(args.read)):
+            print(f"{line.line_no:>3}: {line.text}")
+        return 0
 
     if args.init_db:
         conn = db.connect()
