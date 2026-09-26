@@ -1,0 +1,3 @@
+# Grows phase by phase: we only add a library in the phase that actually uses it,
+# so every dependency in this file has a reason you can explain.
+python-dotenv>=1.0   # Phase 0: load ANTHROPIC_API_KEY from .env

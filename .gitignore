@@ -1,0 +1,18 @@
+# Secrets: the API key lives here and must never reach git history.
+# Once a key is committed, deleting the file later does not help; it must be revoked.
+.env
+
+# Virtual environment and Python build noise: recreatable from requirements.txt.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated results (SQLite db, exported Excel). Rebuilt by re-running the pipeline,
+# so committing them would only create noisy diffs.
+output/
+
+.DS_Store
+
+# Personal study notes (bilingual interview prep). Kept on disk, not published.
+LEARNINGS.md
