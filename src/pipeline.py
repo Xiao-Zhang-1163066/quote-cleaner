@@ -6,7 +6,7 @@ read -> extract -> normalise -> store + detect issues -> export.
 """
 import argparse
 
-from src import config
+from src import config, db
 
 
 def check_setup() -> bool:
@@ -34,7 +34,18 @@ def main() -> int:
     # show up in it automatically, which is our built-in usage documentation.
     parser.add_argument("--check", action="store_true",
                         help="verify input files and settings, then exit")
+    parser.add_argument("--init-db", action="store_true",
+                        help="create the database tables and load the RFQ items")
     args = parser.parse_args()
+
+    if args.init_db:
+        conn = db.connect()
+        # `with conn` = one transaction: schema and items are both saved, or neither is.
+        with conn:
+            db.init_db(conn)
+            count = db.load_items(conn)
+        print(f"Database ready at {config.DB_PATH} ({count} RFQ items loaded)")
+        return 0
 
     if args.check:
         print("Setup check:")
