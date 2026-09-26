@@ -1,6 +1,6 @@
 # Grows phase by phase: we only add a library in the phase that actually uses it,
 # so every dependency in this file has a reason you can explain.
-python-dotenv>=1.0   # Phase 0: load ANTHROPIC_API_KEY from .env
+python-dotenv>=1.0   # Phase 0: load OPENAI_API_KEY from .env
 openpyxl>=3.1        # Phase 2: read Excel quotes as raw cells (no header guessing)
 pdfplumber>=0.11     # Phase 2: extract the text layer of PDF quotes
 pytest>=8            # Phase 3: unit tests for conversions and rules

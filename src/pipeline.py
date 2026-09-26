@@ -22,7 +22,9 @@ def check_setup() -> bool:
 
     # Only report whether a key is present, never print it: logs get pasted into
     # chats and tickets, and a printed secret is a leaked secret.
-    print(f"  [{'ok' if config.ANTHROPIC_API_KEY else 'not set'}] ANTHROPIC_API_KEY"
+    print(f"  [{'ok' if config.OPENAI_API_KEY else 'not set'}] OPENAI_API_KEY"
+          " (needed from Phase 4)")
+    print(f"  [{'ok' if config.MODEL_NAME else 'not set'}] QUOTE_MODEL"
           " (needed from Phase 4)")
     return ok
 

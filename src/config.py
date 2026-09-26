@@ -34,11 +34,13 @@ DB_PATH = OUTPUT_DIR / "quotes.db"
 load_dotenv(PROJECT_ROOT / ".env")
 
 # Only ever read from the environment: no default, so a missing key is loud, not silent.
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Model name is config, not code, so swapping models (cost vs accuracy) needs no edit.
-# We'll confirm the exact ID against current docs in Phase 4 before first use.
-MODEL_NAME = os.getenv("QUOTE_MODEL", "claude-sonnet-5")
+# No default on purpose: model names change and which ones an account can use varies, so
+# a hard-coded guess would go stale. Pick one that supports structured outputs and image
+# input, and set QUOTE_MODEL in .env. Phase 4 lists the models your key can use.
+MODEL_NAME = os.getenv("QUOTE_MODEL")
 
 # --- Business rules -------------------------------------------------------------
 # All money arithmetic uses Decimal, never float (0.1 + 0.2 != 0.3 in float, and errors
