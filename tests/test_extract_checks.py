@@ -1,0 +1,97 @@
+"""Tests for the schema (src/schemas.py) and the checks on AI output (src/validate.py).
+
+No API calls: these run offline and pin down what we accept from the model, using the real
+RFQ codes and real lines from the supplier files.
+"""
+from decimal import Decimal as D
+
+import pytest
+from pydantic import ValidationError
+
+from src import validate
+from src.readers import SourceLine
+from src.schemas import OUT_OF_RFQ, item_codes_from_rfq, make_models
+
+CODES = item_codes_from_rfq()
+ExtractedLine, ExtractedQuote = make_models(CODES)
+
+# Northshore line 13 exactly as the reader produced it (the GIB AQ price has a typo: x10).
+GIB_AQ = SourceLine(13, "GIB AQ 10 2.4 24 sht 687.30 16,495.20")
+
+
+def extracted(**overrides):
+    base = dict(line_no=13, item_code="GIB-AQ-10", match_confidence=0.95, qty=24,
+                unit="sht", unit_price=687.30, line_total=16495.20, note=None)
+    return ExtractedLine(**{**base, **overrides})
+
+
+# --- layer 1/2: the schema ---------------------------------------------------
+
+def test_rfq_has_twenty_codes():
+    assert len(CODES) == 20
+
+
+def test_schema_only_offers_rfq_codes_plus_out_of_rfq():
+    enum = ExtractedLine.model_json_schema()["properties"]["item_code"]["enum"]
+    assert set(enum) == set(CODES) | {OUT_OF_RFQ}
+
+
+def test_invented_item_code_is_rejected():
+    with pytest.raises(ValidationError):
+        extracted(item_code="GIB-AQ-12")
+
+
+def test_out_of_rfq_is_allowed_for_charges_like_delivery():
+    assert extracted(item_code=OUT_OF_RFQ).item_code == OUT_OF_RFQ
+
+
+def test_not_quoted_line_keeps_none_instead_of_zero():
+    line = extracted(qty=4, unit="pk", unit_price=None, line_total=None, note="N/Q")
+    assert line.unit_price is None and line.line_total is None
+
+
+def test_gst_status_must_be_one_of_three_values():
+    with pytest.raises(ValidationError):
+        ExtractedQuote(supplier="X", gst_status="maybe", quote_date=None, valid_until=None, lines=[])
+
+
+# --- the grounding check -----------------------------------------------------
+
+def test_numbers_in_handles_thousands_commas_and_trailing_zeros():
+    numbers = validate.numbers_in(GIB_AQ.text)
+    assert {D("687.3"), D("16495.2"), D("24"), D("2.4"), D("10")} <= numbers
+
+
+def test_genuine_line_has_no_problems():
+    assert validate.find_problems([extracted()], [GIB_AQ]) == []
+
+
+def test_ai_silently_fixing_the_supplier_typo_is_caught():
+    problems = validate.find_problems([extracted(unit_price=68.73)], [GIB_AQ])
+    assert problems == ["line 13: unit_price=68.73 does not appear in the source text"]
+
+
+def test_ai_doing_its_own_unit_conversion_is_caught():
+    # Conversion is code's job. 518.4 m2 -> 180 sheets is not written on the line.
+    line = SourceLine(12, "GIB STD 10 2.4 518.4 m2 12.25 6,350.40")
+    problems = validate.find_problems([extracted(line_no=12, qty=180, unit_price=12.25, line_total=6350.40)], [line])
+    assert problems == ["line 12: qty=180.0 does not appear in the source text"]
+
+
+def test_number_from_a_different_row_does_not_count():
+    other = SourceLine(14, "GIB BL 10 2.4 30 sht 56.63 1,698.90")
+    # 56.63 is on line 14, but the AI claims it for line 13.
+    problems = validate.find_problems([extracted(unit_price=56.63)], [GIB_AQ, other])
+    assert any("unit_price=56.63" in p for p in problems)
+
+
+def test_none_values_are_skipped_not_checked():
+    line = SourceLine(23, "BAR CHAIRS 4 pk N/Q -")
+    ok = extracted(line_no=23, item_code="CHAIR-5065", qty=4, unit="pk", unit_price=None, line_total=None)
+    assert validate.find_problems([ok], [line]) == []
+
+
+def test_unknown_line_no_and_bad_confidence_are_reported():
+    problems = validate.find_problems([extracted(line_no=99), extracted(match_confidence=1.7)], [GIB_AQ])
+    assert "line 99: no such line in the source file" in problems
+    assert any("outside 0..1" in p for p in problems)
