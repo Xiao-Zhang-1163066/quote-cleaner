@@ -25,6 +25,12 @@ def extracted(**overrides):
     return ExtractedLine(**{**base, **overrides})
 
 
+def quote(**overrides):
+    base = dict(supplier="X", gst_status="excl", quote_date=None, valid_until=None, lines=[],
+                stated_total=None, stated_total_line_no=None)
+    return ExtractedQuote(**{**base, **overrides})
+
+
 # --- layer 1/2: the schema ---------------------------------------------------
 
 def test_rfq_has_twenty_codes():
@@ -106,6 +112,28 @@ def test_out_of_rfq_may_legitimately_repeat():
              extracted(line_no=2, item_code=OUT_OF_RFQ, **kwargs)]
     source = [SourceLine(1, "x"), SourceLine(2, "y")]
     assert validate.find_problems(lines, source) == []
+
+
+def test_stated_total_with_no_value_is_not_checked():
+    assert validate.check_stated_total(quote(stated_total=None), [GIB_AQ]) == []
+
+
+def test_stated_total_grounded_against_its_own_line():
+    total_line = SourceLine(31, "TOTAL 53892.31")
+    q = quote(stated_total=53892.31, stated_total_line_no=31)
+    assert validate.check_stated_total(q, [GIB_AQ, total_line]) == []
+
+
+def test_stated_total_not_on_the_claimed_line_is_caught():
+    total_line = SourceLine(31, "TOTAL 53892.31")
+    q = quote(stated_total=99999.99, stated_total_line_no=31)   # invented number
+    problems = validate.check_stated_total(q, [GIB_AQ, total_line])
+    assert len(problems) == 1 and "99999.99" in problems[0]
+
+
+def test_stated_total_without_a_line_reference_is_rejected():
+    q = quote(stated_total=53892.31, stated_total_line_no=None)
+    assert validate.check_stated_total(q, [GIB_AQ]) != []
 
 
 def test_unknown_line_no_and_bad_confidence_are_reported():

@@ -60,3 +60,25 @@ def find_problems(lines, source_lines: list[SourceLine]) -> list[str]:
             problems.append(f"item_code {code} is used by {n} lines ({where}); "
                             "at most one of them can be the real match")
     return problems
+
+
+def check_stated_total(quote, source_lines: list[SourceLine]) -> list[str]:
+    """Ground quote.stated_total the same way find_problems grounds line numbers.
+
+    Separate from find_problems because this is a QUOTE-level field (one value per file),
+    not a LINE-level one, so it doesn't fit that function's per-line loop.
+    """
+    if quote.stated_total is None:
+        return []   # nothing to check; a file with no printed total is not an error
+    if quote.stated_total_line_no is None:
+        return ["stated_total was given without stated_total_line_no to ground it against"]
+
+    by_no = {s.line_no: s.text for s in source_lines}
+    text = by_no.get(quote.stated_total_line_no)
+    if text is None:
+        return [f"stated_total_line_no {quote.stated_total_line_no}: no such line in the source file"]
+
+    if _key(Decimal(str(quote.stated_total))) not in numbers_in(text):
+        return [f"stated_total={quote.stated_total} does not appear on line "
+                f"{quote.stated_total_line_no} ({text!r})"]
+    return []

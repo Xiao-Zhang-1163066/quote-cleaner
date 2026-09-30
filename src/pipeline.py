@@ -61,7 +61,8 @@ def main() -> int:
             print(f"FAILED: {result.error}")
             return 1
         print(f"supplier={result.quote.supplier!r} gst={result.quote.gst_status} "
-              f"lines={len(result.quote.lines)}")
+              f"lines={len(result.quote.lines)} "
+              f"stated_total={result.quote.stated_total} (line {result.quote.stated_total_line_no})")
         for line in result.quote.lines:
             print(f"  {line.line_no:>3}: {line.item_code:<14} conf={line.match_confidence:.2f} "
                   f"qty={line.qty} unit={line.unit} price={line.unit_price} "

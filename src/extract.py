@@ -64,6 +64,9 @@ Rules:
 - note: copy any remark on the line (e.g. "ALT", "N/Q", a substitution, a lead time).
 - line_no must be the exact line number given in the input, so results can be traced back
   to the source file.
+- If the file has its own printed total (e.g. a "TOTAL" or "Subtotal" row), copy that number
+  into stated_total and give stated_total_line_no as the line it appears on. If there is no
+  such total anywhere in the file, leave both null — do not calculate one yourself.
 """
 
 
@@ -131,7 +134,8 @@ def extract_quote(source_lines: list[SourceLine], client: OpenAI | None = None,
         # (Pydantic re-validating our own dataclass rules, not the API's) is the numbers
         # grounding check, which the schema has no way to express.
         try:
-            problems = validate.find_problems(quote.lines, source_lines)
+            problems = (validate.find_problems(quote.lines, source_lines)
+                       + validate.check_stated_total(quote, source_lines))
         except ValidationError as exc:   # belt-and-braces: malformed even after API-side parsing
             problems = [str(exc)]
 
