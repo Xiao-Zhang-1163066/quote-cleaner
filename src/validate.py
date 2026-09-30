@@ -5,9 +5,11 @@ the source line it came from. That stops invented numbers, and it also stops the
 "fixing" a supplier's typo (687.30 -> 68.73), which we want reported, not repaired.
 """
 import re
+from collections import Counter
 from decimal import ROUND_HALF_UP, Decimal
 
 from src.readers import SourceLine
+from src.schemas import OUT_OF_RFQ
 
 # "6,350.40", "518.4", "2400": digits with optional thousands commas and decimals.
 _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
@@ -47,4 +49,14 @@ def find_problems(lines, source_lines: list[SourceLine]) -> list[str]:
             # None means "not quoted" (N/Q). It is skipped, and must not be turned into 0.
             if value is not None and _key(Decimal(str(value))) not in present:
                 problems.append(f"{where}: {field}={value} does not appear in the source text")
+
+    # A code assigned to two different lines in the SAME quote is suspicious: a supplier
+    # normally quotes each RFQ item at most once. OUT_OF_RFQ is excluded because several
+    # unrelated extra charges (delivery, a handling fee) legitimately share that one code.
+    counts = Counter(line.item_code for line in lines if line.item_code != OUT_OF_RFQ)
+    for code, n in counts.items():
+        if n > 1:
+            where = ", ".join(f"line {l.line_no}" for l in lines if l.item_code == code)
+            problems.append(f"item_code {code} is used by {n} lines ({where}); "
+                            "at most one of them can be the real match")
     return problems

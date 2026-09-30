@@ -8,7 +8,7 @@ import argparse
 
 from pathlib import Path
 
-from src import config, db, readers
+from src import config, db, extract, readers
 
 
 def check_setup() -> bool:
@@ -42,11 +42,30 @@ def main() -> int:
                         help="create the database tables and load the RFQ items")
     parser.add_argument("--read", metavar="FILE",
                         help="print the lines the reader extracts from one quote file")
+    parser.add_argument("--extract", metavar="FILE",
+                        help="read one quote file and run AI extraction + validation on it")
     args = parser.parse_args()
 
     if args.read:
         for line in readers.read_quote(Path(args.read)):
             print(f"{line.line_no:>3}: {line.text}")
+        return 0
+
+    if args.extract:
+        source_lines = readers.read_quote(Path(args.extract))
+        result = extract.extract_quote(source_lines)
+        print(f"model={result.model} attempts={result.attempts} "
+              f"tokens={result.input_tokens}in/{result.output_tokens}out "
+              f"time={result.elapsed_seconds:.1f}s")
+        if result.quote is None:
+            print(f"FAILED: {result.error}")
+            return 1
+        print(f"supplier={result.quote.supplier!r} gst={result.quote.gst_status} "
+              f"lines={len(result.quote.lines)}")
+        for line in result.quote.lines:
+            print(f"  {line.line_no:>3}: {line.item_code:<14} conf={line.match_confidence:.2f} "
+                  f"qty={line.qty} unit={line.unit} price={line.unit_price} "
+                  f"total={line.line_total} note={line.note}")
         return 0
 
     if args.init_db:

@@ -91,6 +91,23 @@ def test_none_values_are_skipped_not_checked():
     assert validate.find_problems([ok], [line]) == []
 
 
+def test_same_item_code_used_twice_is_flagged():
+    lines = [extracted(line_no=17, item_code="INS-R26"), extracted(line_no=18, item_code="INS-R26")]
+    source = [SourceLine(17, "x"), SourceLine(18, "y")]
+    problems = validate.find_problems(lines, source)
+    assert any("INS-R26" in p and "2 lines" in p for p in problems)
+
+
+def test_out_of_rfq_may_legitimately_repeat():
+    # qty/unit_price/line_total are None here so this isolates the duplicate-code check
+    # from the grounding check (which would otherwise fail against the trivial "x"/"y" text).
+    kwargs = dict(qty=None, unit_price=None, line_total=None)
+    lines = [extracted(line_no=1, item_code=OUT_OF_RFQ, **kwargs),
+             extracted(line_no=2, item_code=OUT_OF_RFQ, **kwargs)]
+    source = [SourceLine(1, "x"), SourceLine(2, "y")]
+    assert validate.find_problems(lines, source) == []
+
+
 def test_unknown_line_no_and_bad_confidence_are_reported():
     problems = validate.find_problems([extracted(line_no=99), extracted(match_confidence=1.7)], [GIB_AQ])
     assert "line 99: no such line in the source file" in problems

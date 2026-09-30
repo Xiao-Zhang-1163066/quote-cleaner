@@ -23,6 +23,18 @@ def item_codes_from_rfq(rfq_csv: Path = config.RFQ_CSV) -> list[str]:
         return [row["item_code"] for row in csv.DictReader(f)]
 
 
+def rfq_catalog(rfq_csv: Path = config.RFQ_CSV) -> list[dict[str, str]]:
+    """code, description and unit for every RFQ item.
+
+    The schema's Literal only gives the model bare symbols like "JNT-COMP": no meaning to
+    match a supplier's wording against. This is what actually lets the model do FR-3
+    (matching), by pairing each code with what it means.
+    """
+    with open(rfq_csv, newline="", encoding="utf-8") as f:
+        return [{"item_code": r["item_code"], "description": r["description"], "unit": r["unit"]}
+                for r in csv.DictReader(f)]
+
+
 def make_models(item_codes: list[str]):
     """Build the line and quote models for a given list of allowed item codes.
 
