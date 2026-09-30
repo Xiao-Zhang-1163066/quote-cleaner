@@ -67,9 +67,9 @@ def make_models(item_codes: list[str]):
         valid_until: str | None
         lines: list[ExtractedLine]
         # The supplier's OWN printed total (e.g. a "TOTAL" row at the foot of the file), in
-        # whatever gst_status this quote uses. Phase 5's "总计不符" rule needs this to compare
-        # against a freshly recomputed sum of the lines — we never trust the file's own total
-        # to be self-consistent, that's the whole point of the check.
+        # whatever gst_status this quote uses. Phase 5's total-mismatch rule needs this to
+        # compare against a freshly recomputed sum of the lines — we never trust the file's
+        # own total to be self-consistent, that's the whole point of the check.
         stated_total: float | None
         # Which source line stated_total was read from, so it can be grounded (checked
         # against the real text) exactly like every other extracted number.

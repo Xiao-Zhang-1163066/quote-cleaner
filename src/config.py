@@ -70,9 +70,12 @@ UNIT_ALIASES = {
 }
 
 # --- Issue-detection thresholds (used from Phase 5) -----------------------------
-CALC_TOLERANCE = 0.05          # $: qty x unit price vs line total may differ by this much
-TYPO_FACTOR = 3.0              # price > 3x or < 1/3 of other suppliers' median => likely typo (error)
-OUTLIER_PCT = 0.25             # price > 25% above the median => outlier (warning)
+# Decimal, not float, for the same reason as GST_RATE above: these are compared directly
+# against Decimal prices, and Decimal refuses to compare against float at all (a loud
+# TypeError, not a silent bug) -- so mixing the two here would break rules.py immediately.
+CALC_TOLERANCE = Decimal("0.05")   # $: qty x unit price vs line total may differ by this much
+TYPO_FACTOR = Decimal("3")         # price >= 3x or <= 1/3 of other suppliers' median => typo (error)
+OUTLIER_PCT = Decimal("0.25")      # price >= 25% above the median (but under TYPO_FACTOR) => outlier (warning)
 
 # --- AI trust boundary (used from Phase 4) --------------------------------------
 # Below this, a match is queued for a human instead of being counted automatically.
