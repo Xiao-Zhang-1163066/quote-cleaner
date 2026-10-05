@@ -32,17 +32,34 @@ The model can only choose an item code from the RFQ's 20 codes or `OUT_OF_RFQ` (
 
 Measured by `src/evaluate.py` against a hand-written answer key (`data/answer_key/expected_normalised.csv`)
 for the three supported files (A: Excel, B: PDF, C: email). The model's output varies from run to run, so this
-shows the range over the last three runs (with `gpt-4o-mini`), not just the best one:
+shows the range over three full runs with `gpt-4.1`, not just the best one:
 
 | Metric | Target | Result |
 |---|---|---|
-| Item-match accuracy (before human review) | ≥ 95% | **96.5–100%** |
+| Item-match accuracy (before human review) | ≥ 95% | **98.2–100%** |
 | Unit price within $0.01, quantity within 0.01 | 0 misses | **0** |
 | ERROR-level issues found (calc error, price typo) | 100% | **100%** (2/2) |
 | WARNING-level issues found | 100% | **100%** (17/17) |
 | False ERRORs | 0 | **0** |
-| False WARNINGs | keep low | **0–6** (when a match or a bundle is missed) |
-| End-to-end run (3 files) | < 2 min | under 1 min |
+| False WARNINGs | keep low | **0–1** |
+| End-to-end run (3 files) | < 2 min | ~20 s |
+
+### Choosing the model by measurement
+
+Same prompt, same validation, each file extracted 3 times per model. "Passed" means it got through the
+grounding checks (every number really printed in the source) within the allowed retry:
+
+| Model | A (Excel) | B (PDF) | C (email) | Retries needed | C's bundle read correctly |
+|---|---|---|---|---|---|
+| gpt-4o-mini (first choice) | 3/3 | 3/3 | **0/3** | every C run | 0/3 |
+| gpt-4.1-mini | 3/3 | 3/3 | 3/3 | none | 3/3 |
+| **gpt-4.1** (chosen) | 3/3 | 3/3 | 3/3 | none | 3/3 |
+| gpt-5.4-mini | 3/3 | 3/3 | 3/3 | every C run | 3/3 |
+| gpt-5.5 | 3/3 | 3/3 | 3/3 | none | 3/3, but ~2–3× slower |
+
+gpt-4o-mini kept *computing* line totals the email never prints, which the grounding check correctly
+rejected. gpt-4.1 was chosen over gpt-4.1-mini because it had no value misses across full runs. It costs a
+few cents per run.
 
 What it catches in the mock data, among others: a line total with an extra zero (11,201.40 instead of
 1,120.14), a unit price ×10 (687.30 for plasterboard that costs ~$60), an LVL beam priced 45% above the other
@@ -60,6 +77,8 @@ suppliers, a quote with no GST statement, a short-supplied quantity and an unann
 - The issues list is written for a person, not for the scorer. `rules.py` reports one finding per item (that's
   what gets scored), but the Excel groups a supplier's missing items into one row: "doesn't sell plasterboard"
   is one fact, not 11 things to act on.
+- "Quoted" has one definition, shared by the rules and the evaluator: matched **and** priced. A stronger
+  model correctly matches "BAR CHAIRS N/Q" to the chairs item; that must still count as missing.
 - Understanding vs rules, again: for a bundled price ("nails and Sikaflex, $980 all up") the AI says *which*
   RFQ items the bundle covers (stored in its own table, foreign-keyed to the RFQ), and code decides those
   items are therefore not missing.
@@ -73,12 +92,12 @@ Requires Python 3.12 and an OpenAI API key.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # then set OPENAI_API_KEY and QUOTE_MODEL (e.g. gpt-4o-mini)
+cp .env.example .env          # then set OPENAI_API_KEY and QUOTE_MODEL (e.g. gpt-4.1)
 
 python -m src.pipeline --check   # verify input files and settings
 python -m src.pipeline --run     # extract → normalise → store → detect issues → output/comparison.xlsx
 python -m src.evaluate           # score the run against the answer key
-pytest                           # 110 offline unit tests, no API calls
+pytest                           # 112 offline unit tests, no API calls
 ```
 
 Debug one file: `python -m src.pipeline --read FILE` (what the reader sees) or `--extract FILE` (what the AI returns).
