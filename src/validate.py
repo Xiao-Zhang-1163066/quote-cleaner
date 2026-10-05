@@ -78,7 +78,13 @@ def check_stated_total(quote, source_lines: list[SourceLine]) -> list[str]:
     if text is None:
         return [f"stated_total_line_no {quote.stated_total_line_no}: no such line in the source file"]
 
-    if _key(Decimal(str(quote.stated_total))) not in numbers_in(text):
+    # A PDF's text layer often splits a label from its value: "TOTAL (incl GST)" on one line,
+    # "$59,589.49" on the next. The model then cites the label's line, which is a fair reading
+    # of the page, not an invented number -- and rewording the prompt didn't stop it. So the
+    # value may also sit on the line directly below. Still strict: it must be printed in the
+    # source, and only one line further down.
+    below = by_no.get(quote.stated_total_line_no + 1, "")
+    if _key(Decimal(str(quote.stated_total))) not in numbers_in(text) | numbers_in(below):
         return [f"stated_total={quote.stated_total} does not appear on line "
                 f"{quote.stated_total_line_no} ({text!r})"]
     return []

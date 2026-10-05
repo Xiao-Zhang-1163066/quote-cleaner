@@ -131,6 +131,19 @@ def test_stated_total_not_on_the_claimed_line_is_caught():
     assert len(problems) == 1 and "99999.99" in problems[0]
 
 
+def test_stated_total_on_the_line_below_its_label_is_accepted():
+    # B's PDF really does this: label on line 28, value on line 29, model cites line 28.
+    label, value = SourceLine(28, "TOTAL (incl GST)"), SourceLine(29, "$59,589.49")
+    q = quote(stated_total=59589.49, stated_total_line_no=28)
+    assert validate.check_stated_total(q, [label, value]) == []
+
+
+def test_stated_total_two_lines_away_is_still_caught():
+    label, gap, value = SourceLine(28, "TOTAL"), SourceLine(29, "-"), SourceLine(30, "59,589.49")
+    q = quote(stated_total=59589.49, stated_total_line_no=28)
+    assert validate.check_stated_total(q, [label, gap, value]) != []
+
+
 def test_stated_total_without_a_line_reference_is_rejected():
     q = quote(stated_total=53892.31, stated_total_line_no=None)
     assert validate.check_stated_total(q, [GIB_AQ]) != []

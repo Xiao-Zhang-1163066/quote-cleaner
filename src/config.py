@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 # Resolve paths from this file's location, not from the current working directory.
 # Otherwise the tool works when run from the project root and breaks when run from
-# anywhere else (e.g. by pytest or by the Streamlit app later).
+# anywhere else (e.g. by pytest or by the web API later).
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # The mock data is committed inside the repo so a fresh `git clone` runs with no extra
