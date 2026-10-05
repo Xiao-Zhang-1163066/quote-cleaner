@@ -31,15 +31,17 @@ The model can only choose an item code from the RFQ's 20 codes or `OUT_OF_RFQ` (
 ## Results
 
 Measured by `src/evaluate.py` against a hand-written answer key (`data/answer_key/expected_normalised.csv`)
-for the three supported files (A: Excel, B: PDF, C: email):
+for the three supported files (A: Excel, B: PDF, C: email). The model's output varies from run to run, so this
+shows the range over the last three runs (with `gpt-4o-mini`), not just the best one:
 
 | Metric | Target | Result |
 |---|---|---|
-| Item-match accuracy (before human review) | ≥ 95% | **98.2%** (56/57) |
+| Item-match accuracy (before human review) | ≥ 95% | **96.5–100%** |
 | Unit price within $0.01, quantity within 0.01 | 0 misses | **0** |
 | ERROR-level issues found (calc error, price typo) | 100% | **100%** (2/2) |
 | WARNING-level issues found | 100% | **100%** (17/17) |
 | False ERRORs | 0 | **0** |
+| False WARNINGs | keep low | **0–6** (when a match or a bundle is missed) |
 | End-to-end run (3 files) | < 2 min | under 1 min |
 
 What it catches in the mock data, among others: a line total with an extra zero (11,201.40 instead of
@@ -55,6 +57,12 @@ suppliers, a quote with no GST statement, a short-supplied quantity and an unann
 - Several problems looked like prompt problems but were fixed in code. Example: a PDF's text layer puts
   `TOTAL (incl GST)` and `$59,589.49` on separate lines, so the grounding check now also accepts the value
   on the line directly below its label.
+- The issues list is written for a person, not for the scorer. `rules.py` reports one finding per item (that's
+  what gets scored), but the Excel groups a supplier's missing items into one row: "doesn't sell plasterboard"
+  is one fact, not 11 things to act on.
+- Understanding vs rules, again: for a bundled price ("nails and Sikaflex, $980 all up") the AI says *which*
+  RFQ items the bundle covers (stored in its own table, foreign-keyed to the RFQ), and code decides those
+  items are therefore not missing.
 - Some prompt changes made things worse: one fixed a false positive on one file but broke extraction on
   another, so it was reverted.
 
@@ -70,7 +78,7 @@ cp .env.example .env          # then set OPENAI_API_KEY and QUOTE_MODEL (e.g. gp
 python -m src.pipeline --check   # verify input files and settings
 python -m src.pipeline --run     # extract → normalise → store → detect issues → output/comparison.xlsx
 python -m src.evaluate           # score the run against the answer key
-pytest                           # 103 offline unit tests, no API calls
+pytest                           # 110 offline unit tests, no API calls
 ```
 
 Debug one file: `python -m src.pipeline --read FILE` (what the reader sees) or `--extract FILE` (what the AI returns).
