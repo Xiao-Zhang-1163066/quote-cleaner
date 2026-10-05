@@ -99,6 +99,37 @@ def supplier_grand_totals(rows: list[ComparisonRow], suppliers: list[str]) -> di
     return totals
 
 
+def group_missing_items(issues: list[Issue]) -> list[Issue]:
+    """Collapse each supplier's missing_item findings into ONE row for display.
+
+    rules.py reports one finding per item on purpose: that's the data, and evaluate.py scores
+    it item by item. But for a reader, "Kiwi Frame doesn't sell plasterboard, insulation, ..."
+    is one fact, not 11 things to act on -- 11 near-identical yellow rows bury the 4 warnings
+    that actually need a decision. Presentation is this module's job, so the grouping lives
+    here. A supplier missing just one item keeps its normal row.
+    """
+    missing_by_supplier: dict[str, list[str]] = {}
+    for issue in issues:
+        if issue.rule == "missing_item":
+            missing_by_supplier.setdefault(issue.supplier, []).append(issue.item_code or "?")
+
+    grouped: list[Issue] = []
+    emitted: set[str] = set()
+    for issue in issues:
+        if issue.rule != "missing_item":
+            grouped.append(issue)
+            continue
+        codes = missing_by_supplier[issue.supplier]
+        if len(codes) == 1:
+            grouped.append(issue)
+        elif issue.supplier not in emitted:   # first one stands in for the whole group
+            emitted.add(issue.supplier)
+            grouped.append(Issue("missing_item", issue.severity,
+                                 f"not quoted: {', '.join(sorted(codes))}",
+                                 issue.supplier, f"{len(codes)} items"))
+    return grouped
+
+
 # ---------------------------------------------------------------------------------
 # openpyxl writing: the only part of this module with I/O
 # ---------------------------------------------------------------------------------
@@ -176,7 +207,7 @@ def write_issues_sheet(ws: Worksheet, issues: list[Issue]) -> None:
     # rules.py's Enum, so .value sorting isn't reliable (alphabetical: error, info, warning) --
     # sort by the enum member's declaration order instead.
     order = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}
-    for issue in sorted(issues, key=lambda i: order[i.severity]):
+    for issue in sorted(group_missing_items(issues), key=lambda i: order[i.severity]):
         ws.append([issue.severity.value, issue.rule, issue.supplier, issue.item_code, issue.message])
         for cell in ws[ws.max_row]:
             cell.fill = SEVERITY_FILL[issue.severity]

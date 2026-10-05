@@ -92,6 +92,7 @@ def ingest_quote_file(conn: sqlite3.Connection, path: Path,
                 line_total_ex_gst=(float(normalised.line_total_ex_gst)
                                    if normalised.line_total_ex_gst is not None else None),
                 flags=normalised.flags)
+            db.set_bundle_items(conn, line_id, line.bundle_item_codes)
     return result
 
 

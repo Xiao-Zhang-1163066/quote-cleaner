@@ -219,3 +219,22 @@ def test_single_quote_falls_back_to_reference_price(rfq_qtys, reference_prices):
              line_total_ex_gst=D("2016.00"))])
     issues = detect_issues([only], rfq_qtys, reference_prices)
     assert any(i.rule == "outlier" and i.item_code == "LVL-24045" for i in issues)
+
+
+def test_items_inside_a_bundle_are_not_reported_missing(rfq_qtys, reference_prices):
+    # C's real case: "Nails (brt + galv) and the Sikaflex ... as a package, $980 all up".
+    c = SupplierQuote("C", "unstated", None, [
+        line(item_code=OUT_OF_RFQ, raw_line_total=D("980.00"), line_total_ex_gst=D("980.00"),
+             bundle_item_codes=("INS-R26", "MESH-665"))])
+    issues = detect_issues([c], rfq_qtys, reference_prices)
+    missing = {i.item_code for i in issues if i.rule == "missing_item"}
+    assert missing == {"LVL-24045"}               # only the item really not quoted
+    lump = next(i for i in issues if i.rule == "lump_sum")
+    assert "INS-R26, MESH-665" in lump.message    # the reader can see what the $980 covers
+
+
+def test_a_free_remark_is_not_an_out_of_rfq_charge(rfq_qtys, reference_prices):
+    # C's "Delivery free to North Shore": out of the RFQ, but no price, so nothing to flag.
+    c = SupplierQuote("C", "excl", None, [line(item_code=OUT_OF_RFQ, note="Delivery free")])
+    issues = detect_issues([c], rfq_qtys, reference_prices)
+    assert not any(i.rule == "out_of_rfq" for i in issues)

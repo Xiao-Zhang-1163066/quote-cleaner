@@ -43,6 +43,8 @@ def make_models(item_codes: list[str]):
     """
     # Literal[("A", "B")] is the same as Literal["A", "B"]; a tuple lets us build it from data.
     code_type = Literal[tuple(item_codes) + (OUT_OF_RFQ,)]
+    # A bundle can only cover REAL catalog items, so OUT_OF_RFQ is not allowed here.
+    rfq_code_type = Literal[tuple(item_codes)]
 
     class ExtractedLine(BaseModel):
         # Which line of the source file this came from. raw_text is deliberately NOT here:
@@ -59,6 +61,11 @@ def make_models(item_codes: list[str]):
         unit_price: float | None
         line_total: float | None
         note: str | None          # e.g. "ALT - Earthwool R2.6 n/a" or "N/Q"
+        # Which RFQ items one bundled price covers ("nails and Sikaflex, $980 all up").
+        # Knowing WHAT is in the bundle is understanding, so the AI says it; deciding that
+        # those items are therefore not "missing" is a rule, so code does that (rules.py).
+        # An empty list for every ordinary line.
+        bundle_item_codes: list[rfq_code_type]
 
     class ExtractedQuote(BaseModel):
         supplier: str

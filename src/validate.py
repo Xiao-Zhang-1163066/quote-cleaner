@@ -38,6 +38,11 @@ def find_problems(lines, source_lines: list[SourceLine]) -> list[str]:
         if not 0 <= line.match_confidence <= 1:
             problems.append(f"{where}: match_confidence {line.match_confidence} is outside 0..1")
 
+        # A bundle is one price for several items, so it can't also be matched to ONE of them.
+        if line.bundle_item_codes and line.item_code != OUT_OF_RFQ:
+            problems.append(f"{where}: bundle_item_codes given but item_code is "
+                            f"{line.item_code}, not {OUT_OF_RFQ}")
+
         text = by_no.get(line.line_no)
         if text is None:
             problems.append(f"{where}: no such line in the source file")

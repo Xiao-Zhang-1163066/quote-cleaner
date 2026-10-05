@@ -131,6 +131,7 @@ class SupplierLine:
     line_total_ex_gst: Decimal | None
     note: str | None = None
     is_total_only: bool = False      # True when normalise.py set FLAG_TOTAL_ONLY on this line
+    bundle_item_codes: tuple[str, ...] = ()   # RFQ items this line's single price covers
 
 
 @dataclass(frozen=True)
@@ -163,6 +164,9 @@ def detect_issues(quotes: list[SupplierQuote], rfq_qtys: dict[str, Decimal],
             code = line.item_code
             if code and code != OUT_OF_RFQ:
                 seen_codes.add(code)
+            # Items inside a bundle WERE quoted, just not one by one -- reporting them as
+            # missing as well would tell the reader the same thing twice, and wrongly.
+            seen_codes.update(line.bundle_item_codes)
 
             if calc_error(line.raw_qty, line.raw_unit_price, line.raw_line_total):
                 issues.append(Issue(
@@ -176,10 +180,14 @@ def detect_issues(quotes: list[SupplierQuote], rfq_qtys: dict[str, Decimal],
                                     quote.supplier, code))
 
             if is_lump_sum(code, line.qty_canonical, line.line_total_ex_gst):
+                covers = ", ".join(line.bundle_item_codes) or "unspecified items"
                 issues.append(Issue("lump_sum", Severity.INFO,
-                                    "one price covers more than one item; not split",
+                                    f"one price covers {covers}; not split per item",
                                     quote.supplier, code))
-            elif code == OUT_OF_RFQ:
+            # Only a line with a price is a CHARGE. "Delivery free to North Shore" has none,
+            # so it is a remark, not a cost to flag.
+            elif code == OUT_OF_RFQ and (line.line_total_ex_gst is not None
+                                         or line.unit_price_ex_gst is not None):
                 issues.append(Issue("out_of_rfq", Severity.INFO,
                                     "charge not in the RFQ", quote.supplier, code))
 

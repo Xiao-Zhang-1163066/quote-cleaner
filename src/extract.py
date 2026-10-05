@@ -66,6 +66,9 @@ Rules:
 - gst_status is "incl" only if the file states prices include GST, "excl" if it states
   exclusive, and "unstated" if it says nothing either way. Do not assume "excl" by default.
 - note: copy any remark on the line (e.g. "ALT", "N/Q", a substitution, a lead time).
+- If ONE price covers SEVERAL catalog items (a package, a bundle, "all up"), output it as a
+  single line with item_code=OUT_OF_RFQ and list the catalog items it covers in
+  bundle_item_codes. For every other line, bundle_item_codes is an empty list.
 - line_no must be the exact line number given in the input, so results can be traced back
   to the source file.
 - If the file prints BOTH a pre-GST subtotal and a GST-inclusive grand total (e.g.

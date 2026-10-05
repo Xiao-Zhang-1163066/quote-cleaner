@@ -21,7 +21,8 @@ GIB_AQ = SourceLine(13, "GIB AQ 10 2.4 24 sht 687.30 16,495.20")
 
 def extracted(**overrides):
     base = dict(line_no=13, item_code="GIB-AQ-10", match_confidence=0.95, qty=24,
-                unit="sht", unit_price=687.30, line_total=16495.20, note=None)
+                unit="sht", unit_price=687.30, line_total=16495.20, note=None,
+                bundle_item_codes=[])
     return ExtractedLine(**{**base, **overrides})
 
 
@@ -153,3 +154,13 @@ def test_unknown_line_no_and_bad_confidence_are_reported():
     problems = validate.find_problems([extracted(line_no=99), extracted(match_confidence=1.7)], [GIB_AQ])
     assert "line 99: no such line in the source file" in problems
     assert any("outside 0..1" in p for p in problems)
+
+
+def test_bundle_may_only_list_real_rfq_codes():
+    with pytest.raises(ValidationError):
+        extracted(item_code=OUT_OF_RFQ, bundle_item_codes=[OUT_OF_RFQ])
+
+
+def test_bundle_on_a_line_matched_to_one_item_is_flagged():
+    line = extracted(bundle_item_codes=["SEAL-123"])   # still item_code=GIB-AQ-10
+    assert any("bundle_item_codes" in p for p in validate.find_problems([line], [GIB_AQ]))

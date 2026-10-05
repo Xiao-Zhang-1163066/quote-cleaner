@@ -7,7 +7,7 @@ from decimal import Decimal as D
 
 from src.evaluate import (
     ExpectedRow, actual_issue_tags, answer_key_supplier_label, expected_issue_tags,
-    false_positive_errors, load_expected, score_issue_recall, score_item_matching,
+    false_positives, load_expected, score_issue_recall, score_item_matching,
     score_values,
 )
 from src.rules import Issue, Severity, SupplierLine, SupplierQuote
@@ -212,7 +212,7 @@ def test_actual_issue_tags_nulls_the_item_code_for_quote_level_rules():
     assert ("Harbour", "MESH-665", "calc_error", Severity.ERROR) in tags
 
 
-# --- score_issue_recall / false_positive_errors ---------------------
+# --- score_issue_recall / false_positives ---------------------
 
 def test_recall_is_one_when_every_expected_tag_was_actually_found():
     expected = {("Harbour", "MESH-665", "calc_error", Severity.ERROR)}
@@ -231,16 +231,16 @@ def test_recall_reports_exactly_what_was_missed():
     assert result.missed == {("Northshore", "GIB-AQ-10", "typo", Severity.ERROR)}
 
 
-def test_false_positive_errors_finds_an_error_we_raised_that_was_not_expected():
+def test_false_positives_finds_an_error_we_raised_that_was_not_expected():
     expected = {("Harbour", "MESH-665", "calc_error", Severity.ERROR)}
     actual = {("Harbour", "MESH-665", "calc_error", Severity.ERROR),
              ("Northshore", "WB-180", "calc_error", Severity.ERROR)}   # a false alarm
-    assert false_positive_errors(expected, actual) == {
+    assert false_positives(expected, actual, Severity.ERROR) == {
         ("Northshore", "WB-180", "calc_error", Severity.ERROR)}
 
 
-def test_false_positive_errors_ignores_warning_and_info_level_noise():
-    # Only ERROR is checked -- a wrongly-raised WARNING isn't a "0 false positives" violation.
+def test_false_positives_only_counts_the_severity_asked_for():
     expected: set = set()
     actual = {("Harbour", "MESH-665", "qty_short", Severity.WARNING)}
-    assert false_positive_errors(expected, actual) == set()
+    assert false_positives(expected, actual, Severity.ERROR) == set()
+    assert false_positives(expected, actual, Severity.WARNING) == actual

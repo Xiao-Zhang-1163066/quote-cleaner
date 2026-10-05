@@ -14,7 +14,8 @@ from openpyxl import load_workbook
 
 from src.export import (
     ComparisonRow, FILL_CHEAPEST, FILL_ERROR, FILL_WARNING, Item, SupplierPrice,
-    build_comparison_rows, cheapest_supplier, export_workbook, supplier_grand_totals,
+    build_comparison_rows, cheapest_supplier, export_workbook, group_missing_items,
+    supplier_grand_totals,
 )
 from src.rules import Issue, Severity, SupplierLine, SupplierQuote
 
@@ -123,3 +124,20 @@ def test_export_workbook_writes_a_demo_ready_excel(tmp_path: Path):
     assert issues_ws["A2"].fill.fgColor.rgb[2:] == FILL_ERROR.fgColor.rgb[2:]
     assert issues_ws["A3"].value == "warning"
     assert issues_ws["A3"].fill.fgColor.rgb[2:] == FILL_WARNING.fgColor.rgb[2:]
+
+
+def test_missing_items_are_grouped_into_one_row_per_supplier():
+    issues = [
+        Issue("gst_unstated", Severity.WARNING, "no GST statement", "Kiwi Frame"),
+        Issue("missing_item", Severity.WARNING, "not quoted", "Kiwi Frame", "MESH-665"),
+        Issue("missing_item", Severity.WARNING, "not quoted", "Kiwi Frame", "GIB-STD-10"),
+        Issue("missing_item", Severity.WARNING, "not quoted", "Northshore", "SEAL-123"),
+    ]
+    grouped = group_missing_items(issues)
+
+    assert len(grouped) == 3
+    kiwi = next(i for i in grouped if i.rule == "missing_item" and i.supplier == "Kiwi Frame")
+    assert kiwi.item_code == "2 items"
+    assert kiwi.message == "not quoted: GIB-STD-10, MESH-665"
+    # A supplier missing only one item keeps its ordinary, specific row.
+    assert Issue("missing_item", Severity.WARNING, "not quoted", "Northshore", "SEAL-123") in grouped

@@ -79,6 +79,15 @@ CREATE TABLE IF NOT EXISTS quote_lines_norm (
     line_total_ex_gst   REAL,
     flags               TEXT
 );
+
+-- Which RFQ items one bundled price covers (C's "nails + Sikaflex, $980 all up"). One line
+-- can cover many items, so this is its own table rather than a column; the item_code FK
+-- means the AI can't put an invented code in a bundle either.
+CREATE TABLE IF NOT EXISTS bundle_items (
+    line_id    INTEGER NOT NULL REFERENCES quote_lines_raw(line_id),
+    item_code  TEXT NOT NULL REFERENCES items(item_code),
+    PRIMARY KEY (line_id, item_code)
+);
 """
 
 
@@ -235,6 +244,14 @@ def upsert_norm_line(conn: sqlite3.Connection, line_id: int, item_code: str | No
     )
 
 
+def set_bundle_items(conn: sqlite3.Connection, line_id: int, item_codes: list[str]) -> None:
+    """Replace the set of items one line's bundle covers. Delete-then-insert rather than an
+    upsert: on a re-run the AI may list a different set, and a code it dropped must go too."""
+    conn.execute("DELETE FROM bundle_items WHERE line_id = ?", (line_id,))
+    conn.executemany("INSERT INTO bundle_items (line_id, item_code) VALUES (?, ?)",
+                     [(line_id, code) for code in sorted(set(item_codes))])
+
+
 @dataclass(frozen=True)
 class ItemRow:
     """One row of the `items` table, read back as Decimal -- the shape pipeline.py needs to
@@ -271,7 +288,7 @@ def load_quotes(conn: sqlite3.Connection) -> list[SupplierQuote]:
     rows = conn.execute(
         """
         SELECT q.quote_id, q.supplier, q.gst_status, q.stated_total,
-               r.raw_qty, r.raw_unit_price, r.raw_line_total, r.raw_note,
+               r.line_id, r.raw_qty, r.raw_unit_price, r.raw_line_total, r.raw_note,
                n.item_code, n.qty_canonical, n.unit_price_ex_gst, n.line_total_ex_gst, n.flags
         FROM quotes q
         JOIN quote_lines_raw r ON r.quote_id = q.quote_id
@@ -279,6 +296,9 @@ def load_quotes(conn: sqlite3.Connection) -> list[SupplierQuote]:
         ORDER BY q.quote_id, r.line_no
         """
     ).fetchall()
+    bundles: dict[int, list[str]] = {}
+    for b in conn.execute("SELECT line_id, item_code FROM bundle_items ORDER BY item_code"):
+        bundles.setdefault(b["line_id"], []).append(b["item_code"])
 
     # SQL can't return a tree of objects, only flat rows -- group consecutive rows by
     # quote_id back into one SupplierQuote per supplier, each holding its own line list.
@@ -309,5 +329,6 @@ def load_quotes(conn: sqlite3.Connection) -> list[SupplierQuote]:
             line_total_ex_gst=to_decimal(row["line_total_ex_gst"]),
             note=row["raw_note"],
             is_total_only=FLAG_TOTAL_ONLY in flags,
+            bundle_item_codes=tuple(bundles.get(row["line_id"], ())),
         ))
     return [quotes[qid] for qid in order]

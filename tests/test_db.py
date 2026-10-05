@@ -4,6 +4,7 @@ Every test uses a fresh in-memory SQLite connection (":memory:") -- no file on d
 cleanup needed, and fast enough that this file costs nothing to run on every save. This is
 the first test file for db.py: Phases 1-7 only ever exercised it manually via `--init-db`.
 """
+import sqlite3
 from decimal import Decimal
 from pathlib import Path
 
@@ -151,3 +152,24 @@ def test_upsert_norm_line_is_idempotent(conn):
     assert conn.execute("SELECT COUNT(*) FROM quote_lines_norm").fetchone()[0] == 1
     [quote] = db.load_quotes(conn)
     assert quote.lines[0].qty_canonical == Decimal("2")   # second write won, not duplicated
+
+
+def test_bundle_items_round_trip_and_a_rerun_replaces_the_set(conn):
+    for code in ("NAIL-75-BR", "NAIL-75-HDG", "SEAL-123"):
+        _seed_item(conn, code)
+    qid = db.upsert_quote(conn, "C_KiwiFrame", "c.txt", "unstated")
+    lid = db.upsert_raw_line(conn, qid, line_no=22, raw_text="Nails and Sikaflex, $980 all up")
+    db.upsert_norm_line(conn, lid, item_code=OUT_OF_RFQ, match_confidence=0.6,
+                        qty_canonical=None, unit_price_ex_gst=None, line_total_ex_gst=980)
+    db.set_bundle_items(conn, lid, ["SEAL-123", "NAIL-75-BR", "NAIL-75-HDG"])
+    db.set_bundle_items(conn, lid, ["NAIL-75-BR", "SEAL-123"])   # re-run lists fewer items
+
+    [quote] = db.load_quotes(conn)
+    assert quote.lines[0].bundle_item_codes == ("NAIL-75-BR", "SEAL-123")
+
+
+def test_bundle_item_with_an_invented_code_is_rejected_by_the_fk(conn):
+    qid = db.upsert_quote(conn, "C_KiwiFrame", "c.txt", "unstated")
+    lid = db.upsert_raw_line(conn, qid, line_no=22, raw_text="package")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.set_bundle_items(conn, lid, ["NOT-A-CODE"])

@@ -267,14 +267,17 @@ def score_issue_recall(expected_tags: set[IssueTag], actual_tags: set[IssueTag],
     return RecallResult(expected_at_severity, expected_at_severity & actual_tags)
 
 
-def false_positive_errors(expected_tags: set[IssueTag], actual_tags: set[IssueTag]) -> set[IssueTag]:
-    """ERROR-severity findings we raised that the answer key does NOT expect -- the
-    acceptance table's "0 false positives" check. Only ERROR is checked: crying wolf on an
-    INFO/WARNING is far less costly than a false "there's definitely a mistake here".
+def false_positives(expected_tags: set[IssueTag], actual_tags: set[IssueTag],
+                    severity: Severity) -> set[IssueTag]:
+    """Findings at this severity that we raised but the answer key does NOT expect.
+
+    ERROR is the acceptance table's hard "0 false positives" target. WARNING is reported too:
+    it has no target, but a check that only ever looked at ERRORs once let 3 false "missing"
+    warnings (items inside C's $980 bundle) sit unnoticed in the issues sheet.
     """
-    actual_errors = {t for t in actual_tags if t[3] == Severity.ERROR}
-    expected_errors = {t for t in expected_tags if t[3] == Severity.ERROR}
-    return actual_errors - expected_errors
+    actual = {t for t in actual_tags if t[3] == severity}
+    expected = {t for t in expected_tags if t[3] == severity}
+    return actual - expected
 
 
 # ---------------------------------------------------------------------------------
@@ -362,10 +365,11 @@ def print_report(conn: sqlite3.Connection) -> None:
         for tag in sorted(result.missed, key=_tag_sort_key):
             print(f"    MISSED: {tag}")
 
-    false_positives = false_positive_errors(expected_tags, actual_tags)
-    print(f"=== False-positive ERRORs (target: 0): {len(false_positives)} ===")
-    for tag in sorted(false_positives, key=_tag_sort_key):
-        print(f"  {tag}")
+    for severity, target in ((Severity.ERROR, "target: 0"), (Severity.WARNING, "no target, keep low")):
+        wrong = false_positives(expected_tags, actual_tags, severity)
+        print(f"=== False-positive {severity.value.upper()}s ({target}): {len(wrong)} ===")
+        for tag in sorted(wrong, key=_tag_sort_key):
+            print(f"  {tag}")
 
     if unrecognised:
         print(f"=== Unrecognised answer-key phrases: {len(unrecognised)} "
