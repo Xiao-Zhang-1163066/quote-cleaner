@@ -134,6 +134,14 @@ class SupplierLine:
     bundle_item_codes: tuple[str, ...] = ()   # RFQ items this line's single price covers
 
 
+def is_priced(line: SupplierLine) -> bool:
+    """Did this line actually put a price on its item? "BAR CHAIRS 4 pk N/Q" is correctly
+    matched to CHAIR-5065 -- knowing WHICH item wasn't priced is useful -- but it is not a
+    quote for it. The one definition of "quoted", shared by the missing_item rule and by
+    evaluate.py so the two can never disagree about it."""
+    return line.unit_price_ex_gst is not None or line.line_total_ex_gst is not None
+
+
 @dataclass(frozen=True)
 class SupplierQuote:
     supplier: str
@@ -162,7 +170,7 @@ def detect_issues(quotes: list[SupplierQuote], rfq_qtys: dict[str, Decimal],
         seen_codes: set[str] = set()
         for line in quote.lines:
             code = line.item_code
-            if code and code != OUT_OF_RFQ:
+            if code and code != OUT_OF_RFQ and is_priced(line):
                 seen_codes.add(code)
             # Items inside a bundle WERE quoted, just not one by one -- reporting them as
             # missing as well would tell the reader the same thing twice, and wrongly.

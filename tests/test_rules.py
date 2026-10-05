@@ -238,3 +238,11 @@ def test_a_free_remark_is_not_an_out_of_rfq_charge(rfq_qtys, reference_prices):
     c = SupplierQuote("C", "excl", None, [line(item_code=OUT_OF_RFQ, note="Delivery free")])
     issues = detect_issues([c], rfq_qtys, reference_prices)
     assert not any(i.rule == "out_of_rfq" for i in issues)
+
+
+def test_a_matched_but_unpriced_line_is_still_missing(rfq_qtys, reference_prices):
+    # Northshore's "BAR CHAIRS 4 pk N/Q": a stronger model correctly matches it to the item,
+    # but N/Q is not a quote -- the item must still be reported missing.
+    b = SupplierQuote("B", "incl", None, [line(item_code="MESH-665", raw_qty=D(14), note="N/Q")])
+    issues = detect_issues([b], rfq_qtys, reference_prices)
+    assert ("missing_item", "MESH-665") in {(i.rule, i.item_code) for i in issues}

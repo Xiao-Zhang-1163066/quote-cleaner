@@ -82,10 +82,12 @@ def score_item_matching(expected: list[ExpectedRow], actual: list[SupplierQuote]
     metric -- whether we handled them right is scored later, by issue-detection recall.
     """
     rfq_codes = rfq_codes or set(item_codes_from_rfq())
+    # "Quoted" means matched AND priced -- the same rules.is_priced() the missing_item rule
+    # uses, so a correctly matched "N/Q" line counts as not quoted on both sides.
     actual_keys = {
         (quote.supplier, line.item_code)
         for quote in actual for line in quote.lines
-        if line.item_code in rfq_codes
+        if line.item_code in rfq_codes and rules.is_priced(line)
     }
 
     total = 0

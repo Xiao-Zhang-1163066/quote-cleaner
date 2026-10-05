@@ -58,6 +58,14 @@ def test_both_sides_agree_the_item_was_missing_counts_as_correct():
     assert result.correct == 1
 
 
+def test_a_matched_n_q_line_agrees_with_an_expected_missing_row():
+    # Northshore's "BAR CHAIRS 4 pk N/Q": matched to the right code, but with no price.
+    expected = [ExpectedRow("Northshore", "MESH-665", None, None, None)]
+    actual = [_quote("Northshore", _line("MESH-665", qty=D(4)))]
+
+    assert score_item_matching(expected, actual, RFQ_CODES).correct == 1
+
+
 def test_a_real_item_our_system_failed_to_match_is_a_mismatch():
     # Answer key says Harbour quoted GIB-STD-10; our system produced nothing for it
     # (e.g. the AI matched it to the wrong code, or missed the line entirely).
