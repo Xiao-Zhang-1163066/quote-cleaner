@@ -192,6 +192,26 @@ def test_detect_issues_leaves_one_out_so_a_supplier_never_flags_itself(rfq_qtys,
     assert [i for i in issues if i.rule in ("typo", "outlier")] == []
 
 
+def test_typo_false_positive_on_the_honest_price_is_broken_by_reference_price(
+        rfq_qtys, reference_prices):
+    """Real bug, found by running this against actual data: with only 2 quotes for an
+    item, leave-one-out can't tell WHO is wrong -- B's genuine 10x typo made A's correct
+    price look exactly as extreme, by the same ratio, in the other direction. The reference
+    price is the independent 3rd source that breaks the tie.
+    """
+    a = SupplierQuote("A", "excl", None, [
+        line(item_code="MESH-665", unit_price_ex_gst=D("80.00"), qty_canonical=D(14),
+             line_total_ex_gst=D("1120.00"))])          # close to the $80.00 reference
+    b = SupplierQuote("B", "excl", None, [
+        line(item_code="MESH-665", unit_price_ex_gst=D("800.00"), qty_canonical=D(14),
+             line_total_ex_gst=D("11200.00"))])          # 10x the reference: the real typo
+
+    issues = detect_issues([a, b], rfq_qtys, reference_prices)
+    by_supplier = {i.supplier: i.rule for i in issues if i.rule in ("typo", "outlier")}
+    assert by_supplier.get("A") is None       # A's honest price must NOT be flagged
+    assert by_supplier.get("B") == "typo"     # B's real typo must still be caught
+
+
 def test_single_quote_falls_back_to_reference_price(rfq_qtys, reference_prices):
     # Only one supplier quotes LVL-24045, at roughly +30% over the $43.10 reference price.
     only = SupplierQuote("Solo", "excl", None, [

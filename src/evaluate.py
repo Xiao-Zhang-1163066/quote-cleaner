@@ -10,11 +10,12 @@ rows of the table) is a separate piece, built next -- it needs the answer key's 
 `flags` column mapped to rules.py's rule names, which load_expected() doesn't parse yet.
 """
 import csv
-from dataclasses import dataclass
+import sqlite3
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 
-from src import config
+from src import config, db, rules
 from src.rules import Issue, Severity, SupplierQuote
 from src.schemas import item_codes_from_rfq
 
@@ -118,12 +119,20 @@ class ValueMismatch:
 
 
 def score_values(expected: list[ExpectedRow], actual: list[SupplierQuote],
-                 rfq_codes: set[str] | None = None) -> list[ValueMismatch]:
+                 rfq_codes: set[str] | None = None,
+                 known_errors: frozenset[tuple[str, str]] = frozenset()) -> list[ValueMismatch]:
     """Only checks rows where a match exists on both sides. A row one side has and the
     other doesn't is already reported by score_item_matching() -- checking it again here
     would count the same underlying mistake twice, once as a "wrong match" and once as a
     "wrong number", which would double-punish it and make the two metrics harder to read
     independently.
+
+    known_errors (supplier, item_code) pairs already reported at ERROR severity by
+    rules.detect_issues()) are skipped for the same reason: a planted typo like B's GIB-AQ-10
+    (printed 10x too high) is BY DESIGN never auto-corrected -- normalise.py carries the
+    wrong number through untouched so the rules stage can flag it. Scoring its value here
+    too would compare our honestly-wrong extraction against the answer key's "plausible
+    corrected" number, double-counting a mistake score_issue_recall already caught.
     """
     rfq_codes = rfq_codes or set(item_codes_from_rfq())
     actual_lines = {
@@ -136,6 +145,8 @@ def score_values(expected: list[ExpectedRow], actual: list[SupplierQuote],
     for row in expected:
         if row.item_code not in rfq_codes or row.qty_canonical is None:
             continue   # not an RFQ code, or genuinely not quoted -- nothing to compare
+        if (row.supplier, row.item_code) in known_errors:
+            continue   # already reported as an ERROR issue -- see known_errors above
         line = actual_lines.get((row.supplier, row.item_code))
         if line is None:
             continue   # unmatched: score_item_matching() already flags this
@@ -264,3 +275,114 @@ def false_positive_errors(expected_tags: set[IssueTag], actual_tags: set[IssueTa
     actual_errors = {t for t in actual_tags if t[3] == Severity.ERROR}
     expected_errors = {t for t in expected_tags if t[3] == Severity.ERROR}
     return actual_errors - expected_errors
+
+
+# ---------------------------------------------------------------------------------
+# I/O: the one function a human actually runs (`python -m src.evaluate`). Everything above
+# this line is pure and unit-tested with hand-built fixtures; this is where it finally meets
+# the real database and the real answer key. Same split export.py uses for the same reason.
+# ---------------------------------------------------------------------------------
+
+def _tag_sort_key(tag: IssueTag) -> tuple[str, str, str]:
+    # Plain sorted(tags) would crash: QUOTE_LEVEL_RULES tags have item_code=None, and
+    # None < "some string" raises TypeError in Python 3 (no implicit ordering across types).
+    # Falling back to "" for None sidesteps that without changing what the tag itself means.
+    supplier, item_code, rule, _severity = tag
+    return (supplier, item_code or "", rule)
+
+
+def answer_key_supplier_label(source_file: str) -> str:
+    """The answer key's `supplier` column is not the company name printed on the letterhead
+    -- it's the mock filename's first two underscore-separated tokens (e.g.
+    "A_Harbour_Timber_Q-24817.xlsx" -> "A_Harbour"). The AI extracts the REAL company name
+    for FR-2 ("HARBOUR TIMBER & HARDWARE LTD"), which is the right thing for the Excel
+    header -- it is just a different string to the answer key's filename-based label. This
+    translates one to the other, for scoring only.
+    """
+    return "_".join(Path(source_file).stem.split("_")[:2])
+
+
+def _rekeyed_for_scoring(conn: sqlite3.Connection,
+                         quotes: list[SupplierQuote]) -> list[SupplierQuote]:
+    """Swap each quote's `.supplier` for the answer key's label, in a COPY used only for
+    comparing against the answer key. rules.py/export.py never see this -- they keep using
+    the real company name everywhere a human actually looks at the output.
+    """
+    label_by_display_name = {
+        row["supplier"]: answer_key_supplier_label(row["source_file"])
+        for row in conn.execute("SELECT supplier, source_file FROM quotes")
+    }
+    return [replace(q, supplier=label_by_display_name.get(q.supplier, q.supplier))
+           for q in quotes]
+
+
+def print_report(conn: sqlite3.Connection) -> None:
+    """Score the real pipeline output against expected_normalised.csv and print it against
+    the spec's acceptance table, one section per target."""
+    expected = load_expected()
+    actual = _rekeyed_for_scoring(conn, db.load_quotes(conn))
+    # Scope to suppliers we actually ingested: D (the WeChat screenshot) has no reader yet
+    # (Phase 9), so every D row would otherwise show up as a mismatch for a file we never
+    # even attempted -- that would conflate "not built yet" with "built wrong". This also
+    # means the filter needs no update when Phase 9 adds D: it will just start showing up.
+    processed = {q.supplier for q in actual}
+    expected = [row for row in expected if row.supplier in processed]
+
+    item_rows = db.get_items(conn)
+    rfq_qtys = {i.item_code: i.rfq_qty for i in item_rows}
+    reference_prices = {i.item_code: i.ref_price_ex_gst for i in item_rows}
+    issues = rules.detect_issues(actual, rfq_qtys, reference_prices)
+    known_errors = frozenset((i.supplier, i.item_code) for i in issues
+                             if i.severity == Severity.ERROR and i.item_code)
+
+    print("=== Item-match accuracy (target >=95% pre-human-review) ===")
+    match = score_item_matching(expected, actual)
+    print(f"  {match.accuracy:.1%} ({match.correct}/{match.total})")
+    for supplier, code in sorted(match.mismatches):
+        print(f"  MISMATCH: {supplier} / {code}")
+
+    print("=== Value tolerance: $0.01 price / 0.01 qty (target: 0 rows out of tolerance) ===")
+    mismatches = score_values(expected, actual, known_errors=known_errors)
+    print(f"  {len(mismatches)} row(s) out of tolerance")
+    for m in mismatches:
+        print(f"  {m.supplier}/{m.item_code} {m.field}: expected {m.expected}, got {m.actual}")
+
+    expected_tags, unrecognised = expected_issue_tags(expected)
+    # total_mismatch can never appear on the expected side (see module docstring's KNOWN
+    # GAP: the per-line CSV has no slot for a whole-quote fact) -- so by construction it
+    # would ALWAYS register as a false positive below, whether we're right or wrong about
+    # it. It gets its own manual-check section further down instead of a misleading count.
+    actual_tags = actual_issue_tags([i for i in issues if i.rule != "total_mismatch"])
+
+    print("=== Issue-detection recall (target: 100% at each severity) ===")
+    for severity in (Severity.ERROR, Severity.WARNING):
+        result = score_issue_recall(expected_tags, actual_tags, severity)
+        print(f"  {severity.value}: {result.recall:.1%} "
+              f"({len(result.found)}/{len(result.expected)})")
+        for tag in sorted(result.missed, key=_tag_sort_key):
+            print(f"    MISSED: {tag}")
+
+    false_positives = false_positive_errors(expected_tags, actual_tags)
+    print(f"=== False-positive ERRORs (target: 0): {len(false_positives)} ===")
+    for tag in sorted(false_positives, key=_tag_sort_key):
+        print(f"  {tag}")
+
+    if unrecognised:
+        print(f"=== Unrecognised answer-key phrases: {len(unrecognised)} "
+              f"(not scored above -- check KEYWORD_RULES) ===")
+        for phrase in unrecognised:
+            print(f"  {phrase}")
+
+    # KNOWN GAP (see module docstring): total_mismatch is a whole-quote fact the answer
+    # key's per-line CSV has nowhere to carry, so it can't be auto-scored above. Printing
+    # whatever we actually found is the best this script can do -- a human still has to
+    # confirm it matches the spec's "A's total" ERROR by hand.
+    total_mismatches = [i for i in issues if i.rule == "total_mismatch"]
+    print(f"=== total_mismatch findings: {len(total_mismatches)} "
+          f"(NOT auto-scored -- verify by hand against spec's 'A's total' ERROR) ===")
+    for issue in total_mismatches:
+        print(f"  {issue.supplier}: {issue.message}")
+
+
+if __name__ == "__main__":
+    print_report(db.connect())

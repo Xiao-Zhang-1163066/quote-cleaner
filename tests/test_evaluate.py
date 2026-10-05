@@ -6,8 +6,9 @@ the REAL answer key to pin down that the CSV parser actually understands its rea
 from decimal import Decimal as D
 
 from src.evaluate import (
-    ExpectedRow, actual_issue_tags, expected_issue_tags, false_positive_errors,
-    load_expected, score_issue_recall, score_item_matching, score_values,
+    ExpectedRow, actual_issue_tags, answer_key_supplier_label, expected_issue_tags,
+    false_positive_errors, load_expected, score_issue_recall, score_item_matching,
+    score_values,
 )
 from src.rules import Issue, Severity, SupplierLine, SupplierQuote
 
@@ -23,6 +24,16 @@ def _line(item_code, qty=None, price=None, total=None) -> SupplierLine:
 def _quote(supplier, *lines) -> SupplierQuote:
     return SupplierQuote(supplier=supplier, gst_status="excl", stated_total=None,
                          lines=list(lines))
+
+
+# --- answer_key_supplier_label ----------------------------------------------
+
+def test_answer_key_supplier_label_takes_the_first_two_filename_tokens():
+    # Real filenames from data/quotes/ -- pinning down the actual convention, not a
+    # made-up example, since this is the exact mismatch that made every score read ~0%.
+    assert answer_key_supplier_label("A_Harbour_Timber_Q-24817.xlsx") == "A_Harbour"
+    assert answer_key_supplier_label("B_Northshore_Building_Supplies_quote.pdf") == "B_Northshore"
+    assert answer_key_supplier_label("C_KiwiFrame_email.txt") == "C_KiwiFrame"
 
 
 # --- score_item_matching ---------------------------------------------------
@@ -110,6 +121,19 @@ def test_an_unmatched_row_is_not_double_counted_here():
     actual = [_quote("Harbour")]   # no line at all
 
     assert score_values(expected, actual, RFQ_CODES) == []
+
+
+def test_a_known_error_row_is_not_double_counted_either():
+    # A planted typo (price printed 10x too high) is never auto-corrected by design -- it
+    # gets caught once by issue recall (the "typo" ERROR). Scoring the value here too would
+    # compare our honestly-wrong extraction against the answer key's "plausible corrected"
+    # number and double-punish the same root cause.
+    expected = [ExpectedRow("Northshore", "GIB-AQ-10", D("24"), D("59.77"), D("1434.37"))]
+    actual = [_quote("Northshore", _line("GIB-AQ-10", D("24"), D("597.65"), D("14343.70")))]
+
+    mismatches = score_values(expected, actual, RFQ_CODES,
+                              known_errors=frozenset({("Northshore", "GIB-AQ-10")}))
+    assert mismatches == []
 
 
 # --- load_expected: parsing the REAL answer key -----------------------------

@@ -66,10 +66,13 @@ def make_models(item_codes: list[str]):
         quote_date: str | None    # as written; parsing dates is not the AI's job
         valid_until: str | None
         lines: list[ExtractedLine]
-        # The supplier's OWN printed total (e.g. a "TOTAL" row at the foot of the file), in
-        # whatever gst_status this quote uses. Phase 5's total-mismatch rule needs this to
-        # compare against a freshly recomputed sum of the lines — we never trust the file's
-        # own total to be self-consistent, that's the whole point of the check.
+        # The supplier's OWN printed total, on the SAME GST basis as the individual line
+        # prices (the pre-GST subtotal, if the file prints both that and a GST-inclusive
+        # grand total -- see INSTRUCTIONS in extract.py). Phase 5's total-mismatch rule
+        # needs this to compare against a freshly recomputed sum of the lines; comparing a
+        # GST-inclusive total against ex-GST line totals would manufacture a ~15% "mismatch"
+        # out of nothing. We never trust the file's own total to be self-consistent, that's
+        # the whole point of the check -- but the comparison still has to be apples-to-apples.
         stated_total: float | None
         # Which source line stated_total was read from, so it can be grounded (checked
         # against the real text) exactly like every other extracted number.

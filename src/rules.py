@@ -214,6 +214,18 @@ def detect_issues(quotes: list[SupplierQuote], rfq_qtys: dict[str, Decimal],
             if not others and code in reference_prices:
                 others = [reference_prices[code]]   # only one quote: compare to public retail
             band = price_band(price, others)
+            # Leave-one-out alone cannot tell WHO is wrong when there is only one other
+            # quote and THAT one has the typo: the ratio is symmetric, so the honest price
+            # looks exactly as extreme as the dishonest one (found by actually running this
+            # against real data -- GIB-AQ-10, where B's price was 10x too high and A's
+            # genuinely correct price got flagged right along with it). Break the tie with
+            # the reference price as an INDEPENDENT third source -- not blended into the
+            # median above, which a real typo would just drag along with it -- if this
+            # supplier's own price looks ordinary next to the public retail price, the typo
+            # is on the other side, not here.
+            if band == "typo" and code in reference_prices:
+                if price_band(price, [reference_prices[code]]) is None:
+                    band = None
             if band:
                 severity = Severity.ERROR if band == "typo" else Severity.WARNING
                 baseline = _median(others) if others else None

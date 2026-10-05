@@ -16,3 +16,7 @@ output/
 
 # Personal study notes (bilingual interview prep). Kept on disk, not published.
 LEARNINGS.md
+
+# Running dev log: what was tried, what broke, what got fixed, in chronological order.
+# Working notes, not a polished writeup -- LEARNINGS.md is the curated version of this.
+DEV_LOG.md

@@ -46,6 +46,10 @@ Rules:
   item_code=OUT_OF_RFQ and a low match_confidence. It is fine to guess wrong; it is NOT fine
   to silently skip a line, because a skipped line looks identical to "supplier didn't offer
   this item" and that is a different, wrong conclusion.
+- Do NOT extract a Subtotal/GST/TOTAL footer row as one of these product lines, even though
+  it has a number in the price column -- it is not a product line (no product code or
+  description), it belongs ONLY in stated_total/stated_total_line_no below, never also
+  inside lines.
 - If a value is not written on the line (e.g. marked "N/Q", or simply absent), leave that
   field as null. NEVER invent, estimate, or guess a number that is not on the page.
 - item_code must be one of the {len(ITEM_CODES)} RFQ codes above, chosen by matching the
@@ -64,9 +68,13 @@ Rules:
 - note: copy any remark on the line (e.g. "ALT", "N/Q", a substitution, a lead time).
 - line_no must be the exact line number given in the input, so results can be traced back
   to the source file.
-- If the file has its own printed total (e.g. a "TOTAL" or "Subtotal" row), copy that number
-  into stated_total and give stated_total_line_no as the line it appears on. If there is no
-  such total anywhere in the file, leave both null — do not calculate one yourself.
+- If the file prints BOTH a pre-GST subtotal and a GST-inclusive grand total (e.g.
+  "Subtotal" ... "GST 15%" ... "TOTAL"), copy the PRE-GST SUBTOTAL into stated_total, not
+  the final GST-inclusive figure -- the subtotal is the number directly comparable to
+  summing the line items' own prices, which are themselves pre-GST. If the file prints only
+  ONE total figure with no separate GST breakdown, copy that one. Give stated_total_line_no
+  as the line stated_total itself appears on. If there is no total anywhere in the file,
+  leave both null — do not calculate one yourself.
 """
 
 

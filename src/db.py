@@ -10,9 +10,14 @@ Transactions: none of these functions commit. The caller wraps a whole stage in
 """
 import csv
 import sqlite3
+from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 
 from src import config
+from src.normalise import FLAG_TOTAL_ONLY, to_decimal
+from src.rules import SupplierLine, SupplierQuote
+from src.schemas import OUT_OF_RFQ
 
 # Money columns are REAL because SQLite has no decimal type. That is safe here only because
 # all arithmetic happens in Python with Decimal (normalise.py) and values are rounded to
@@ -35,7 +40,13 @@ CREATE TABLE IF NOT EXISTS quotes (
     quote_date   TEXT,
     -- 'unstated' is its own value on purpose: silence about GST is a finding, not "excl".
     gst_status   TEXT NOT NULL CHECK (gst_status IN ('incl', 'excl', 'unstated')),
-    valid_until  TEXT
+    valid_until  TEXT,
+    -- The quote's OWN printed grand total, exactly as extracted (same gst_status as the
+    -- lines above -- not yet ex-GST). Phase 1 had no column for this; rules.total_mismatch
+    -- needs it to compare against a freshly recomputed sum of the lines, so it has to be
+    -- stored somewhere, and it's a fact about the whole quote, not any one line.
+    stated_total          REAL,
+    stated_total_line_no  INTEGER   -- traceability: which line of the source file it came from
 );
 
 -- Exactly what the supplier wrote. Never modified by later stages.
@@ -123,22 +134,27 @@ def load_items(conn: sqlite3.Connection,
 
 def upsert_quote(conn: sqlite3.Connection, supplier: str, source_file: str,
                  gst_status: str, quote_date: str | None = None,
-                 valid_until: str | None = None) -> int:
+                 valid_until: str | None = None, stated_total: float | None = None,
+                 stated_total_line_no: int | None = None) -> int:
     """Insert or update one supplier quote and return its quote_id."""
     # ON CONFLICT ... DO UPDATE keeps the existing row (and its quote_id).
     # Do NOT use INSERT OR REPLACE: it deletes the old row and inserts a new one with a
     # new id, which orphans every line that pointed at the old id.
     conn.execute(
         """
-        INSERT INTO quotes (supplier, source_file, gst_status, quote_date, valid_until)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO quotes (supplier, source_file, gst_status, quote_date, valid_until,
+                            stated_total, stated_total_line_no)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_file) DO UPDATE SET
             supplier = excluded.supplier,
             gst_status = excluded.gst_status,
             quote_date = excluded.quote_date,
-            valid_until = excluded.valid_until
+            valid_until = excluded.valid_until,
+            stated_total = excluded.stated_total,
+            stated_total_line_no = excluded.stated_total_line_no
         """,
-        (supplier, source_file, gst_status, quote_date, valid_until),
+        (supplier, source_file, gst_status, quote_date, valid_until,
+         stated_total, stated_total_line_no),
     )
     # A separate SELECT is the most portable way to get the id: after an update-on-conflict
     # cursor.lastrowid is not reliable.
@@ -175,3 +191,123 @@ def upsert_raw_line(conn: sqlite3.Connection, quote_id: int, line_no: int, raw_t
         "SELECT line_id FROM quote_lines_raw WHERE quote_id = ? AND line_no = ?",
         (quote_id, line_no),
     ).fetchone()["line_id"]
+
+
+# flags is a tuple in normalise.NormalisedLine but SQLite has no array column -- join it
+# into one TEXT column to store, and check membership with a plain substring search to read
+# it back (is_total_only below). No flag string is ever a substring of another, so this
+# never produces a false positive; a real array column (JSON or a separate table) would be
+# the production answer, but is overkill for 5 known flag strings in a demo.
+FLAG_SEPARATOR = "|"
+
+
+def upsert_norm_line(conn: sqlite3.Connection, line_id: int, item_code: str | None,
+                     match_confidence: float | None, qty_canonical: float | None,
+                     unit_price_ex_gst: float | None, line_total_ex_gst: float | None,
+                     flags: tuple[str, ...] = ()) -> None:
+    """Insert or update one line's normalised numbers. 1:1 with a raw line, so line_id
+    (already unique) is reused as the primary key instead of inventing a new one."""
+    # OUT_OF_RFQ is a legal match (schemas.py's Literal allows it) but it is not a row in
+    # `items` -- it means "this charge is real but isn't one of the 20 RFQ items", so there
+    # is no catalog entry to look up. Storing the literal string would violate the item_code
+    # FK, so it is translated to NULL here (this module's own schema comment already says
+    # NULL means "not in the RFQ" -- that was always the plan, Phase 4's AI schema just used
+    # a different spelling for it) and folded into flags instead, so load_quotes() can still
+    # recover it.
+    is_out_of_rfq = item_code == OUT_OF_RFQ
+    db_item_code = None if is_out_of_rfq else item_code
+    db_flags = (OUT_OF_RFQ, *flags) if is_out_of_rfq else flags
+    conn.execute(
+        """
+        INSERT INTO quote_lines_norm (line_id, item_code, match_confidence, qty_canonical,
+                                      unit_price_ex_gst, line_total_ex_gst, flags)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(line_id) DO UPDATE SET
+            item_code = excluded.item_code,
+            match_confidence = excluded.match_confidence,
+            qty_canonical = excluded.qty_canonical,
+            unit_price_ex_gst = excluded.unit_price_ex_gst,
+            line_total_ex_gst = excluded.line_total_ex_gst,
+            flags = excluded.flags
+        """,
+        (line_id, db_item_code, match_confidence, qty_canonical, unit_price_ex_gst,
+         line_total_ex_gst, FLAG_SEPARATOR.join(db_flags)),
+    )
+
+
+@dataclass(frozen=True)
+class ItemRow:
+    """One row of the `items` table, read back as Decimal -- the shape pipeline.py needs to
+    hand to rules.py (rfq_qtys/reference_prices) and export.py (the Item list), without
+    either of those modules having to know SQL exists.
+    """
+    item_code: str
+    description: str
+    unit: str
+    rfq_qty: Decimal
+    ref_price_ex_gst: Decimal
+
+
+def get_items(conn: sqlite3.Connection) -> list[ItemRow]:
+    rows = conn.execute(
+        "SELECT item_code, description, unit, rfq_qty, ref_price_ex_gst "
+        "FROM items ORDER BY item_code"
+    ).fetchall()
+    return [ItemRow(r["item_code"], r["description"], r["unit"],
+                    to_decimal(r["rfq_qty"]), to_decimal(r["ref_price_ex_gst"]))
+            for r in rows]
+
+
+def load_quotes(conn: sqlite3.Connection) -> list[SupplierQuote]:
+    """Rebuild SupplierQuote/SupplierLine objects from what is actually stored in the
+    database -- the "B" choice: rules.py/export.py/evaluate.py consume THIS, not whatever
+    extract.py/normalise.py just computed in memory. A bug in the write path (wrong upsert
+    key, a dropped column) then shows up here as wrong data, instead of never being
+    exercised at all.
+    """
+    # LEFT JOIN, not JOIN: a raw line that failed normalisation (e.g. an unknown unit)
+    # still needs to show up -- as a line with no normalised numbers, not be silently
+    # dropped, which would make a real extraction failure look like "nothing was quoted".
+    rows = conn.execute(
+        """
+        SELECT q.quote_id, q.supplier, q.gst_status, q.stated_total,
+               r.raw_qty, r.raw_unit_price, r.raw_line_total, r.raw_note,
+               n.item_code, n.qty_canonical, n.unit_price_ex_gst, n.line_total_ex_gst, n.flags
+        FROM quotes q
+        JOIN quote_lines_raw r ON r.quote_id = q.quote_id
+        LEFT JOIN quote_lines_norm n ON n.line_id = r.line_id
+        ORDER BY q.quote_id, r.line_no
+        """
+    ).fetchall()
+
+    # SQL can't return a tree of objects, only flat rows -- group consecutive rows by
+    # quote_id back into one SupplierQuote per supplier, each holding its own line list.
+    quotes: dict[int, SupplierQuote] = {}
+    order: list[int] = []
+    for row in rows:
+        qid = row["quote_id"]
+        if qid not in quotes:
+            order.append(qid)
+            quotes[qid] = SupplierQuote(
+                supplier=row["supplier"], gst_status=row["gst_status"],
+                stated_total=to_decimal(row["stated_total"]), lines=[])
+        flags = row["flags"] or ""
+        # The write side folded OUT_OF_RFQ into flags instead of the item_code column (FK
+        # safety -- see upsert_norm_line) -- undo that here so every downstream consumer
+        # (rules.py, export.py, evaluate.py) sees the same OUT_OF_RFQ string it always did.
+        item_code = OUT_OF_RFQ if OUT_OF_RFQ in flags else row["item_code"]
+        # Mutating .lines is fine even though SupplierQuote is frozen: frozen only blocks
+        # reassigning the attribute itself (quote.lines = ...), not mutating the list object
+        # it already points at.
+        quotes[qid].lines.append(SupplierLine(
+            item_code=item_code,
+            raw_qty=to_decimal(row["raw_qty"]),
+            raw_unit_price=to_decimal(row["raw_unit_price"]),
+            raw_line_total=to_decimal(row["raw_line_total"]),
+            qty_canonical=to_decimal(row["qty_canonical"]),
+            unit_price_ex_gst=to_decimal(row["unit_price_ex_gst"]),
+            line_total_ex_gst=to_decimal(row["line_total_ex_gst"]),
+            note=row["raw_note"],
+            is_total_only=FLAG_TOTAL_ONLY in flags,
+        ))
+    return [quotes[qid] for qid in order]
